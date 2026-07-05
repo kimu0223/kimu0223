@@ -1,0 +1,176 @@
+// PitchNote データベーススキーマ
+// 設計意図は docs/03_database.md を参照
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- ユーザー ----------
+
+model User {
+  id          String   @id @db.Uuid // Supabase Auth の auth.users.id と同一
+  username    String   @unique
+  displayName String
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+
+  profile       CoachProfile?
+  articles      Article[]
+  trainingPlans TrainingPlan[]
+  likes         Like[]
+  comments      Comment[]
+  following     Follow[]       @relation("follower")
+  followers     Follow[]       @relation("followee")
+  aiUsages      AiUsage[]
+
+  @@map("users")
+}
+
+enum CoachCategory {
+  YOUTH_CLUB // 少年団
+  CLUB_TEAM // クラブチーム
+  SCHOOL_TEAM // 部活動
+  SOCCER_SCHOOL // スクール
+  PRO // プロ・アカデミー
+  OTHER
+}
+
+model CoachProfile {
+  userId          String        @id @db.Uuid
+  category        CoachCategory
+  ageGroups       String[] // 例: ["U-8", "U-10"]
+  license         String? // 例: "JFA公認C級"
+  experienceYears Int           @default(0)
+  bio             String?       @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("coach_profiles")
+}
+
+// ---------- 記事(ブログ) ----------
+
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Article {
+  id          String        @id @default(uuid()) @db.Uuid
+  authorId    String        @db.Uuid
+  slug        String        @unique
+  title       String
+  bodyMd      String        @db.Text
+  status      ArticleStatus @default(DRAFT)
+  likesCount  Int           @default(0)
+  publishedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  author       User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  tags         ArticleTag[]
+  likes        Like[]
+  comments     Comment[]
+  trainingPlan TrainingPlan?
+
+  @@index([status, publishedAt(sort: Desc)]) // 新着フィード
+  @@index([authorId])
+  @@map("articles")
+}
+
+model Tag {
+  id       String       @id @default(uuid()) @db.Uuid
+  name     String       @unique
+  articles ArticleTag[]
+
+  @@map("tags")
+}
+
+model ArticleTag {
+  articleId String @db.Uuid
+  tagId     String @db.Uuid
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@index([tagId])
+  @@map("article_tags")
+}
+
+// ---------- AI指導案 ----------
+
+model TrainingPlan {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  title      String
+  conditions Json // 生成条件(年代/人数/時間/テーマ/レベル/用具)
+  bodyMd     String   @db.Text
+  articleId  String?  @unique @db.Uuid // 記事化した場合の紐付け
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("training_plans")
+}
+
+model AiUsage {
+  id     String   @id @default(uuid()) @db.Uuid
+  userId String   @db.Uuid
+  usedOn DateTime @db.Date
+  count  Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, usedOn]) // 1ユーザー1日1行でUPSERT
+  @@map("ai_usages")
+}
+
+// ---------- ソーシャル ----------
+
+model Like {
+  userId    String   @db.Uuid
+  articleId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, articleId])
+  @@map("likes")
+}
+
+model Comment {
+  id        String   @id @default(uuid()) @db.Uuid
+  articleId String   @db.Uuid
+  authorId  String   @db.Uuid
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@map("comments")
+}
+
+model Follow {
+  followerId String   @db.Uuid
+  followeeId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  follower User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followee User @relation("followee", fields: [followeeId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followeeId])
+  @@map("follows")
+}
